@@ -8,21 +8,33 @@ Tests the complete workflow:
 5. Test validation constraints
 """
 
-import pytest
 import os
-from datetime import datetime
-from decimal import Decimal
-from app import create_app
-from database import Base, engine, SessionLocal
-from models import Account, Source, Sink, Category, Transfer
+
+# config.py picks its Config class from ENVIRONMENT at IMPORT time, and
+# conftest.py's shared `app` fixture relies on setting this before app is first
+# imported. Importing app below at collection time would otherwise lock the
+# whole session to DevelopmentConfig and break test_database.py's assertion
+# that a testing app uses the in-memory URI.
+os.environ.setdefault('ENVIRONMENT', 'testing')
+
+import pytest                                      # noqa: E402
+from datetime import datetime                      # noqa: E402
+from decimal import Decimal                        # noqa: E402
+from app import create_app                         # noqa: E402
+from database import Base, engine, SessionLocal    # noqa: E402
+from models import Account, Source, Sink, Category, Transfer   # noqa: E402
 
 
 @pytest.fixture
 def app():
-    """Create application for testing."""
-    # Use in-memory SQLite for tests
-    os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
-    
+    """Create application for testing.
+
+    Deliberately does NOT set DATABASE_URL: database.py reads it once at import
+    and builds `engine` there, so assigning it here cannot change the database
+    these tests use — but it does leak into os.environ and makes
+    test_database.py's configurability assertion fail when the suite runs as a
+    whole. Tables are created on (and dropped from) the already-bound engine.
+    """
     app = create_app()
     app.config['TESTING'] = True
     
