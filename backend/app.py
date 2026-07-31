@@ -8,6 +8,7 @@ from flask import Flask, jsonify
 from config import config
 from database import init_db
 from routes.health import health_bp
+from routes.transfers import transfers_bp
 
 
 def create_app():
@@ -28,6 +29,7 @@ def create_app():
 
     # Register blueprints
     app.register_blueprint(health_bp)
+    app.register_blueprint(transfers_bp)
 
     # Log startup information
     print(f"[INFO] Flask app initialized")
