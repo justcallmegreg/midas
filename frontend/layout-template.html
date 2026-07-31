@@ -979,6 +979,39 @@
     </div>
 
     <script>
+        // Store accounts data (for demo purposes)
+        let accounts = [
+            {
+                id: 'ACC001',
+                name: 'Checking Account',
+                iban: 'DE89370400440532013000',
+                currency: 'EUR',
+                balance: 5234.50,
+                created: '2023-06-15',
+                description: 'Main checking account'
+            },
+            {
+                id: 'ACC002',
+                name: 'Savings Account',
+                iban: 'DE89370400440532013001',
+                currency: 'EUR',
+                balance: 12890.25,
+                created: '2023-08-22',
+                description: 'Long-term savings'
+            },
+            {
+                id: 'ACC003',
+                name: 'US Dollar Account',
+                iban: 'US64SVBK960177162814871909',
+                currency: 'USD',
+                balance: 3156.75,
+                created: '2024-01-10',
+                description: 'International transfers'
+            }
+        ];
+
+        let currentEditingId = null;
+
         // Page Switching
         function switchPage(pageId) {
             // Hide all pages
@@ -996,26 +1029,41 @@
             document.querySelectorAll('.sidebar-item').forEach(item => {
                 item.classList.remove('active');
             });
-            event.target.closest('.sidebar-item')?.classList.add('active');
+            
+            // Find and mark the clicked item as active
+            const clickedItem = event && event.target.closest('.sidebar-item');
+            if (clickedItem) {
+                clickedItem.classList.add('active');
+            }
         }
 
         // Account Modal Functions
-        function openAccountModal(mode) {
+        function openAccountModal(mode, accountId = null) {
             const modal = document.getElementById('accountModal');
             const form = document.getElementById('accountForm');
             const modalTitle = document.getElementById('modalTitle');
 
             form.reset();
+            currentEditingId = null;
 
             if (mode === 'new') {
                 modalTitle.textContent = 'Create New Account';
-            } else if (mode === 'edit') {
-                modalTitle.textContent = 'Edit Account';
-                // Pre-fill form with existing data (example)
-                document.getElementById('accountName').value = 'Checking Account';
-                document.getElementById('accountIBAN').value = 'DE89370400440532013000';
-                document.getElementById('accountCurrency').value = 'EUR';
-                document.getElementById('accountBalance').value = '5234.50';
+                document.getElementById('accountName').value = '';
+                document.getElementById('accountIBAN').value = '';
+                document.getElementById('accountCurrency').value = '';
+                document.getElementById('accountBalance').value = '';
+                document.getElementById('accountDescription').value = '';
+            } else if (mode === 'edit' && accountId) {
+                const account = accounts.find(a => a.id === accountId);
+                if (account) {
+                    currentEditingId = accountId;
+                    modalTitle.textContent = 'Edit Account';
+                    document.getElementById('accountName').value = account.name;
+                    document.getElementById('accountIBAN').value = account.iban;
+                    document.getElementById('accountCurrency').value = account.currency;
+                    document.getElementById('accountBalance').value = account.balance;
+                    document.getElementById('accountDescription').value = account.description || '';
+                }
             }
 
             modal.classList.add('show');
@@ -1025,12 +1073,13 @@
             const modal = document.getElementById('accountModal');
             modal.classList.remove('show');
             document.getElementById('accountForm').reset();
+            currentEditingId = null;
         }
 
         function saveAccount() {
             const form = document.getElementById('accountForm');
-            if (form.checkValidity() === false) {
-                alert('Please fill in all required fields');
+            if (!form.checkValidity()) {
+                alert('Please fill in all required fields (Account Name, IBAN, Currency)');
                 return;
             }
 
@@ -1038,20 +1087,57 @@
                 name: document.getElementById('accountName').value,
                 iban: document.getElementById('accountIBAN').value,
                 currency: document.getElementById('accountCurrency').value,
-                balance: document.getElementById('accountBalance').value || 0,
+                balance: parseFloat(document.getElementById('accountBalance').value) || 0,
                 description: document.getElementById('accountDescription').value
             };
 
-            console.log('Saving account:', accountData);
-            alert('Account saved successfully! (This is a demo - no data was persisted)');
+            if (currentEditingId) {
+                // Edit existing account
+                const account = accounts.find(a => a.id === currentEditingId);
+                if (account) {
+                    Object.assign(account, accountData);
+                    console.log('Account updated:', account);
+                }
+            } else {
+                // Create new account
+                const newAccount = {
+                    id: 'ACC' + String(accounts.length + 1).padStart(3, '0'),
+                    ...accountData,
+                    created: new Date().toISOString().split('T')[0]
+                };
+                accounts.push(newAccount);
+                console.log('New account created:', newAccount);
+            }
+
+            renderAccountsTable();
             closeAccountModal();
         }
 
         function deleteAccount(accountId) {
             if (confirm('Are you sure you want to delete this account? This action cannot be undone.')) {
-                console.log('Deleting account:', accountId);
-                alert('Account deleted successfully! (This is a demo - no data was persisted)');
+                accounts = accounts.filter(a => a.id !== accountId);
+                console.log('Account deleted:', accountId);
+                renderAccountsTable();
             }
+        }
+
+        function renderAccountsTable() {
+            const tbody = document.querySelector('#page-settings-accounts table tbody');
+            if (!tbody) return;
+
+            tbody.innerHTML = accounts.map(account => `
+                <tr>
+                    <td>${account.name}</td>
+                    <td>${account.iban}</td>
+                    <td>${account.currency}</td>
+                    <td>$${account.balance.toFixed(2)}</td>
+                    <td>${account.created}</td>
+                    <td>
+                        <button class="action-btn edit" onclick="openAccountModal('edit', '${account.id}')" title="Edit Account">✏️</button>
+                        <button class="action-btn delete" onclick="deleteAccount('${account.id}')" title="Delete Account">🗑️</button>
+                    </td>
+                </tr>
+            `).join('');
         }
 
         // Close modal when clicking outside
@@ -1062,19 +1148,32 @@
             }
         }
 
-        // Handle sidebar navigation
+        // Initialize sidebar navigation
         document.querySelectorAll('.sidebar-item').forEach(item => {
             item.addEventListener('click', function(e) {
                 const href = this.getAttribute('href');
-                if (href && href.startsWith('#/settings/accounts')) {
+                if (href) {
                     e.preventDefault();
-                    switchPage('settings-accounts');
-                    this.classList.add('active');
+                    
+                    // Update active state
                     document.querySelectorAll('.sidebar-item').forEach(i => {
-                        if (i !== this) i.classList.remove('active');
+                        i.classList.remove('active');
                     });
+                    this.classList.add('active');
+
+                    // Navigate to page
+                    if (href.includes('settings/accounts')) {
+                        switchPage('settings-accounts');
+                    } else if (href.includes('transfers')) {
+                        switchPage('transfers');
+                    }
                 }
             });
+        });
+
+        // Set initial state
+        window.addEventListener('load', function() {
+            renderAccountsTable();
         });
     </script>
 </body>
