@@ -32,6 +32,7 @@ export default function Sidebar({ currentPage, onPageChange }) {
       title: 'SETTINGS',
       items: [
         { id: 'settings-accounts', label: 'Accounts', icon: '💳' },
+        { id: 'settings-sources-sinks', label: 'Sources & Sinks', icon: '🔄' },
         { id: 'preferences', label: 'Preferences', icon: '⚙️' },
         { id: 'security', label: 'Security', icon: '🔐' },
         { id: 'api-keys', label: 'API Keys', icon: '🔑' },

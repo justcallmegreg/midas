@@ -5,6 +5,7 @@ import Footer from './components/Footer'
 import Dashboard from './pages/Dashboard'
 import Transfers from './pages/Transfers'
 import SettingsAccounts from './pages/SettingsAccounts'
+import SettingsSourcesSinks from './pages/SettingsSourcesSinks'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
     income: { component: NotFound, title: 'Income' },
     history: { component: NotFound, title: 'History' },
     'settings-accounts': { component: SettingsAccounts, title: 'Account Settings' },
+    'settings-sources-sinks': { component: SettingsSourcesSinks, title: 'Sources & Sinks' },
     preferences: { component: NotFound, title: 'Preferences' },
     security: { component: NotFound, title: 'Security' },
     'api-keys': { component: NotFound, title: 'API Keys' },
