@@ -1,7 +1,12 @@
 /**
  * Playwright Script - Generate Mockup Screenshots
- * Run with: npx playwright test mockups/playwright-mockup-screenshot.js
- * Or: node mockups/playwright-mockup-screenshot.js
+ * Fixed API: browser.newContext() instead of browser.createContext()
+ * 
+ * Installation:
+ *   npm install -D @playwright/test
+ * 
+ * Run with:
+ *   node mockups/playwright-mockup-screenshot.js
  */
 
 const { chromium } = require('playwright');
@@ -10,7 +15,7 @@ const fs = require('fs');
 
 async function generateMockupScreenshots() {
   const browser = await chromium.launch();
-  const context = await browser.createContext();
+  const context = await browser.newContext();
   const page = await context.newPage();
 
   // Get the absolute path to the mockup HTML file
