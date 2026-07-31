@@ -24,20 +24,6 @@ class Account(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # Relationships
-    transfers_outgoing = relationship(
-        'Transfer',
-        foreign_keys='Transfer.ingress_id',
-        backref='ingress_account',
-        cascade='all, delete-orphan'
-    )
-    transfers_incoming = relationship(
-        'Transfer',
-        foreign_keys='Transfer.egress_id',
-        backref='egress_account',
-        cascade='all, delete-orphan'
-    )
-
     def __repr__(self):
         return f"<Account {self.name} ({self.id})>"
 
@@ -52,14 +38,6 @@ class Source(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # Relationships
-    transfers = relationship(
-        'Transfer',
-        foreign_keys='Transfer.ingress_id',
-        backref='source',
-        cascade='all, delete-orphan'
-    )
-
     def __repr__(self):
         return f"<Source {self.name} ({self.id})>"
 
@@ -73,14 +51,6 @@ class Sink(Base):
     description = Column(String(1000))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    # Relationships
-    transfers = relationship(
-        'Transfer',
-        foreign_keys='Transfer.egress_id',
-        backref='sink',
-        cascade='all, delete-orphan'
-    )
 
     def __repr__(self):
         return f"<Sink {self.name} ({self.id})>"
@@ -123,6 +93,15 @@ class Transfer(Base):
         CheckConstraint("amount > 0", name='ck_transfer_positive_amount'),
         CheckConstraint("ingress_type IN ('account', 'source')", name='ck_transfer_valid_ingress'),
         CheckConstraint("egress_type IN ('account', 'sink')", name='ck_transfer_valid_egress'),
+        # Reclaimable transfer constraints
+        CheckConstraint(
+            "(is_reclaimable = false) OR (ingress_type = 'account' AND egress_type = 'sink')",
+            name='ck_reclaimable_only_account_to_sink'
+        ),
+        CheckConstraint(
+            "(is_reclaimable = false) OR (reclaimable_source_name IS NOT NULL)",
+            name='ck_reclaimable_requires_source_name'
+        ),
     )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))

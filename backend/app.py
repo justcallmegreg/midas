@@ -6,7 +6,7 @@ Creates and configures the Flask app with all blueprints and extensions.
 import os
 from flask import Flask, jsonify
 from config import config
-from database import init_db
+from database import init_db, db
 from routes.health import health_bp
 from routes.transfers import transfers_bp
 
@@ -30,6 +30,11 @@ def create_app():
     # Register blueprints
     app.register_blueprint(health_bp)
     app.register_blueprint(transfers_bp)
+    
+    # Teardown scoped session after each request
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        db.remove()
 
     # Log startup information
     print(f"[INFO] Flask app initialized")

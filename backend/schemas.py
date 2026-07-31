@@ -6,7 +6,7 @@ Includes schemas for all entities and the reclaimable transfers feature.
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ============================================================================
@@ -197,27 +197,22 @@ class TransferCreate(BaseModel):
     reclaimable_source_name: Optional[str] = Field(None, max_length=255)
     reclaimed_from_transfer_id: Optional[str] = None
 
-    @field_validator('is_reclaimable')
-    def validate_reclaimable_only_for_account_to_sink(cls, v, info):
-        if v:
-            # is_reclaimable=true only valid for Account → Sink
-            if info.data.get('ingress_type') != 'account' or info.data.get('egress_type') != 'sink':
+    @model_validator(mode='after')
+    def validate_transfer_constraints(self):
+        # Validate reclaimable is only for Account → Sink
+        if self.is_reclaimable:
+            if self.ingress_type != 'account' or self.egress_type != 'sink':
                 raise ValueError('is_reclaimable=true only valid for Account → Sink transfers')
-        return v
-
-    @field_validator('reclaimable_source_name')
-    def validate_reclaimable_source_name_required(cls, v, info):
-        if info.data.get('is_reclaimable') and not v:
-            raise ValueError('reclaimable_source_name required when is_reclaimable=true')
-        return v
-
-    @field_validator('reclaimed_from_transfer_id')
-    def validate_reclaim_only_for_source_to_account(cls, v, info):
-        if v:
-            # reclaimed_from_transfer_id only valid for Source → Account
-            if info.data.get('ingress_type') != 'source' or info.data.get('egress_type') != 'account':
+            # Validate reclaimable_source_name is required
+            if not self.reclaimable_source_name:
+                raise ValueError('reclaimable_source_name required when is_reclaimable=true')
+        
+        # Validate reclaimed_from_transfer_id is only for Source → Account
+        if self.reclaimed_from_transfer_id:
+            if self.ingress_type != 'source' or self.egress_type != 'account':
                 raise ValueError('reclaimed_from_transfer_id only valid for Source → Account transfers')
-        return v
+        
+        return self
 
 
 class TransferUpdate(BaseModel):

@@ -13,7 +13,7 @@ These settings balance resource usage with performance and reliability.
 
 import os
 from sqlalchemy import create_engine, text, event
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 from sqlalchemy.pool import QueuePool
 
 # Get database URL from environment, default to SQLite
@@ -96,3 +96,9 @@ def check_db_connection():
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+# Scoped session for Flask-style db.session.query() usage
+# Use this for Flask request context: db.session.query(Model)
+# Must be torn down per request via @app.teardown_appcontext
+db = scoped_session(SessionLocal)

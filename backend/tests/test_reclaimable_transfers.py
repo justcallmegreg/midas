@@ -9,25 +9,30 @@ Tests the complete workflow:
 """
 
 import pytest
+import os
 from datetime import datetime
 from decimal import Decimal
 from app import create_app
-from database import db
+from database import Base, engine, SessionLocal
 from models import Account, Source, Sink, Category, Transfer
 
 
 @pytest.fixture
 def app():
     """Create application for testing."""
+    # Use in-memory SQLite for tests
+    os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
+    
     app = create_app()
     app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     
-    with app.app_context():
-        db.create_all()
-        yield app
-        db.session.remove()
-        db.drop_all()
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+    
+    yield app
+    
+    # Cleanup
+    Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -39,21 +44,26 @@ def client(app):
 @pytest.fixture
 def sample_data(app):
     """Create sample accounts, sources, sinks."""
-    with app.app_context():
+    session = SessionLocal()
+    try:
         account = Account(name='Main Account', currency='USD', balance=Decimal('10000.00'))
         source = Source(name='Acme Insurance Co')
         sink = Sink(name='Medical Expense')
         category = Category(name='Healthcare')
         
-        db.session.add_all([account, source, sink, category])
-        db.session.commit()
+        session.add_all([account, source, sink, category])
+        session.commit()
         
-        return {
-            'account': account,
-            'source': source,
-            'sink': sink,
-            'category': category,
+        # Keep IDs, but detach objects before returning to avoid session issues
+        data = {
+            'account_id': account.id,
+            'source_id': source.id,
+            'sink_id': sink.id,
+            'category_id': category.id,
         }
+        return data
+    finally:
+        session.close()
 
 
 class TestReclaimableTransfersWorkflow:
@@ -67,10 +77,10 @@ class TestReclaimableTransfersWorkflow:
             'currency': 'USD',
             'description': 'Medical expense - expecting insurance recovery',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
-            'category_id': sample_data['category'].id,
+            'egress_id': sample_data['sink_id'],
+            'category_id': sample_data['category_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Acme Insurance Co',
         })
@@ -90,9 +100,9 @@ class TestReclaimableTransfersWorkflow:
             'amount': 1000.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Acme Insurance Co',
         })
@@ -106,9 +116,9 @@ class TestReclaimableTransfersWorkflow:
             'currency': 'USD',
             'description': 'Insurance payout',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': original_id,
         })
         assert response2.status_code == 201
@@ -136,9 +146,9 @@ class TestReclaimableTransfersWorkflow:
                 'amount': 100.00 * (i + 1),
                 'currency': 'USD',
                 'ingress_type': 'account',
-                'ingress_id': sample_data['account'].id,
+                'ingress_id': sample_data['account_id'],
                 'egress_type': 'sink',
-                'egress_id': sample_data['sink'].id,
+                'egress_id': sample_data['sink_id'],
                 'is_reclaimable': True,
                 'reclaimable_source_name': 'Test Source',
             })
@@ -154,9 +164,9 @@ class TestReclaimableTransfersWorkflow:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': first_id,
         })
         
@@ -175,9 +185,9 @@ class TestReclaimableTransfersWorkflow:
             'amount': 500.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Test',
         })
@@ -188,9 +198,9 @@ class TestReclaimableTransfersWorkflow:
             'amount': 500.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': original_id,
         })
         recovery_id = response2.get_json()['id']
@@ -214,15 +224,16 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Test',
         })
         
         assert response.status_code == 400
-        assert 'only valid for Account → Sink' in response.get_json()['details']
+        details = response.get_json().get('details', '')
+        assert 'only valid for Account → Sink' in str(details)
     
     def test_reclaimable_source_name_required_when_is_reclaimable(self, client, sample_data):
         """Test that reclaimable_source_name is required when is_reclaimable=true."""
@@ -231,15 +242,16 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             # Missing reclaimable_source_name
         })
         
         assert response.status_code == 400
-        assert 'reclaimable_source_name required' in response.get_json()['details']
+        details = response.get_json().get('details', '')
+        assert 'reclaimable_source_name required' in str(details)
     
     def test_cannot_recover_non_reclaimable_transfer(self, client, sample_data):
         """Test that recovery can only link to reclaimable transfers."""
@@ -249,9 +261,9 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': False,
         })
         non_reclaimable_id = response1.get_json()['id']
@@ -262,14 +274,15 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': non_reclaimable_id,
         })
         
         assert response2.status_code == 400
-        assert 'marked as reclaimable' in response2.get_json()['details']
+        details = response2.get_json().get('details', '')
+        assert 'marked as reclaimable' in str(details)
     
     def test_cannot_double_recover_transfer(self, client, sample_data):
         """Test that a transfer can only be recovered once."""
@@ -279,9 +292,9 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Test',
         })
@@ -293,9 +306,9 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': reclaimable_id,
         })
         assert response2.status_code == 201
@@ -306,14 +319,15 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'source',
-            'ingress_id': sample_data['source'].id,
+            'ingress_id': sample_data['source_id'],
             'egress_type': 'account',
-            'egress_id': sample_data['account'].id,
+            'egress_id': sample_data['account_id'],
             'reclaimed_from_transfer_id': reclaimable_id,
         })
         
         assert response3.status_code == 409
-        assert 'already recovered' in response3.get_json()['details']
+        details = response3.get_json().get('details', '')
+        assert 'already recovered' in str(details)
     
     def test_recovery_only_for_source_to_account(self, client, sample_data):
         """Test that reclaimed_from_transfer_id only works for Source → Account."""
@@ -323,9 +337,9 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Test',
         })
@@ -337,14 +351,15 @@ class TestReclaimableTransfersValidation:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'reclaimed_from_transfer_id': reclaimable_id,
         })
         
         assert response2.status_code == 400
-        assert 'only valid for Source → Account' in response2.get_json()['details']
+        details = response2.get_json().get('details', '')
+        assert 'only valid for Source → Account' in str(details)
 
 
 class TestTransferStatistics:
@@ -358,9 +373,9 @@ class TestTransferStatistics:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': True,
             'reclaimable_source_name': 'Test',
         })
@@ -370,9 +385,9 @@ class TestTransferStatistics:
             'amount': 100.00,
             'currency': 'USD',
             'ingress_type': 'account',
-            'ingress_id': sample_data['account'].id,
+            'ingress_id': sample_data['account_id'],
             'egress_type': 'sink',
-            'egress_id': sample_data['sink'].id,
+            'egress_id': sample_data['sink_id'],
             'is_reclaimable': False,
         })
         

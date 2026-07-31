@@ -9,6 +9,7 @@ Supports:
 """
 
 from datetime import datetime
+from uuid import uuid4
 from flask import Blueprint, request, jsonify
 from sqlalchemy import and_
 from database import db
@@ -39,7 +40,7 @@ def validate_entity_exists(entity_type: str, entity_id: str):
     if entity_type not in models:
         raise ValueError(f'Invalid entity type: {entity_type}')
     
-    entity = db.session.query(models[entity_type]).filter_by(id=entity_id).first()
+    entity = db.query(models[entity_type]).filter_by(id=entity_id).first()
     if not entity:
         raise ValueError(f'{entity_type.capitalize()} {entity_id} not found')
     
@@ -89,16 +90,32 @@ def create_transfer():
         transfer_data = TransferCreate(**data)
         
         # Validate entities exist
-        ingress = validate_entity_exists(transfer_data.ingress_type, transfer_data.ingress_id)
-        egress = validate_entity_exists(transfer_data.egress_type, transfer_data.egress_id)
+        try:
+            ingress = validate_entity_exists(transfer_data.ingress_type, transfer_data.ingress_id)
+            egress = validate_entity_exists(transfer_data.egress_type, transfer_data.egress_id)
+        except ValueError as e:
+            return jsonify({
+                'error': 'Entity not found',
+                'details': str(e)
+            }), 400
         
         # Validate category if provided
         category = None
         if transfer_data.category_id:
-            category = validate_entity_exists('category', transfer_data.category_id)
+            try:
+                category = validate_entity_exists('category', transfer_data.category_id)
+            except ValueError as e:
+                return jsonify({
+                    'error': 'Category not found',
+                    'details': str(e)
+                }), 400
+        
+        # Generate transfer ID upfront so we can use it for bidirectional linking
+        transfer_id = str(uuid4())
         
         # Create transfer
         transfer = Transfer(
+            id=transfer_id,
             date=transfer_data.date,
             amount=transfer_data.amount,
             currency=transfer_data.currency,
@@ -112,43 +129,48 @@ def create_transfer():
             reclaimable_source_name=transfer_data.reclaimable_source_name,
         )
         
+        # Add the transfer first (to satisfy FK constraint for recovery linking)
+        db.add(transfer)
+        db.flush()  # Flush to ensure it's in the DB before we update the original
+        
         # Handle recovery linking for Source → Account transfers
         if transfer_data.reclaimed_from_transfer_id:
-            original = db.session.query(Transfer).filter_by(
+            original = db.query(Transfer).filter_by(
                 id=transfer_data.reclaimed_from_transfer_id
             ).first()
             
             if not original:
+                db.rollback()
                 return jsonify({
                     'error': 'Referenced transfer not found',
                     'details': f'Transfer {transfer_data.reclaimed_from_transfer_id} does not exist'
                 }), 404
             
             if not original.is_reclaimable:
+                db.rollback()
                 return jsonify({
                     'error': 'Invalid recovery linking',
                     'details': 'Can only recover transfers marked as reclaimable'
                 }), 400
             
             if original.reclaimed_by_transfer_id:
+                db.rollback()
                 return jsonify({
                     'error': 'Transfer already recovered',
                     'details': f'Transfer {transfer_data.reclaimed_from_transfer_id} was already recovered'
                 }), 409
             
-            # Link the transfers (bidirectional)
-            transfer.id = transfer.id or str(__import__('uuid').uuid4())
-            original.reclaimed_by_transfer_id = transfer.id
+            # Link the transfers (bidirectional): original points to recovery via reclaimed_by_transfer_id
+            original.reclaimed_by_transfer_id = transfer_id
         
-        db.session.add(transfer)
-        db.session.commit()
+        db.commit()
         
         return jsonify(create_transfer_response(transfer, include_recovery=True)), 201
     
     except ValidationError as e:
         return jsonify({
             'error': 'Validation error',
-            'details': e.errors()
+            'details': str(e.errors())
         }), 400
     except ValueError as e:
         return jsonify({
@@ -156,7 +178,7 @@ def create_transfer():
             'details': str(e)
         }), 400
     except Exception as e:
-        db.session.rollback()
+        db.rollback()
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
@@ -171,7 +193,7 @@ def create_transfer():
 def get_transfer(transfer_id):
     """Get a single transfer by ID."""
     try:
-        transfer = db.session.query(Transfer).filter_by(id=transfer_id).first()
+        transfer = db.query(Transfer).filter_by(id=transfer_id).first()
         
         if not transfer:
             return jsonify({'error': 'Transfer not found'}), 404
@@ -207,7 +229,7 @@ def list_transfers():
         offset = int(request.args.get('offset', 0))
         
         # Build query
-        query = db.session.query(Transfer)
+        query = db.query(Transfer)
         
         # Apply filters
         if request.args.get('ingress_type'):
@@ -275,7 +297,7 @@ def list_pending_recoveries():
         limit = min(int(request.args.get('limit', 20)), 100)
         offset = int(request.args.get('offset', 0))
         
-        query = db.session.query(Transfer).filter(
+        query = db.query(Transfer).filter(
             and_(
                 Transfer.is_reclaimable == True,
                 Transfer.reclaimed_by_transfer_id.is_(None)
@@ -315,7 +337,7 @@ def list_recovery_history():
         limit = min(int(request.args.get('limit', 20)), 100)
         offset = int(request.args.get('offset', 0))
         
-        query = db.session.query(Transfer).filter(
+        query = db.query(Transfer).filter(
             Transfer.reclaimed_by_transfer_id.isnot(None)
         )
         
@@ -349,7 +371,7 @@ def update_transfer(transfer_id):
     Can only update description and category_id (not amounts or links).
     """
     try:
-        transfer = db.session.query(Transfer).filter_by(id=transfer_id).first()
+        transfer = db.query(Transfer).filter_by(id=transfer_id).first()
         if not transfer:
             return jsonify({'error': 'Transfer not found'}), 404
         
@@ -358,19 +380,25 @@ def update_transfer(transfer_id):
         
         # Validate category if provided
         if update_data.category_id:
-            validate_entity_exists('category', update_data.category_id)
-            transfer.category_id = update_data.category_id
+            try:
+                validate_entity_exists('category', update_data.category_id)
+                transfer.category_id = update_data.category_id
+            except ValueError as e:
+                return jsonify({
+                    'error': 'Category not found',
+                    'details': str(e)
+                }), 400
         
         if update_data.description is not None:
             transfer.description = update_data.description
         
-        db.session.commit()
+        db.commit()
         return jsonify(create_transfer_response(transfer, include_recovery=True)), 200
     
     except ValidationError as e:
         return jsonify({
             'error': 'Validation error',
-            'details': e.errors()
+            'details': str(e.errors())
         }), 400
     except ValueError as e:
         return jsonify({
@@ -378,7 +406,7 @@ def update_transfer(transfer_id):
             'details': str(e)
         }), 400
     except Exception as e:
-        db.session.rollback()
+        db.rollback()
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
@@ -396,24 +424,24 @@ def delete_transfer(transfer_id):
     Also clears the reclaimed_by_transfer_id on the original reclaimable transfer if this is a recovery.
     """
     try:
-        transfer = db.session.query(Transfer).filter_by(id=transfer_id).first()
+        transfer = db.query(Transfer).filter_by(id=transfer_id).first()
         if not transfer:
             return jsonify({'error': 'Transfer not found'}), 404
         
         # If this transfer was recovering another, clear the link
-        original = db.session.query(Transfer).filter_by(
+        original = db.query(Transfer).filter_by(
             reclaimed_by_transfer_id=transfer_id
         ).first()
         if original:
             original.reclaimed_by_transfer_id = None
         
-        db.session.delete(transfer)
-        db.session.commit()
+        db.delete(transfer)
+        db.commit()
         
         return jsonify({'message': 'Transfer deleted'}), 200
     
     except Exception as e:
-        db.session.rollback()
+        db.rollback()
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
@@ -431,15 +459,15 @@ def get_transfer_summary():
     Returns counts of total, reclaimable, pending recovery, and recovered transfers.
     """
     try:
-        total_count = db.session.query(Transfer).count()
-        reclaimable_count = db.session.query(Transfer).filter_by(is_reclaimable=True).count()
-        pending_recovery_count = db.session.query(Transfer).filter(
+        total_count = db.query(Transfer).count()
+        reclaimable_count = db.query(Transfer).filter_by(is_reclaimable=True).count()
+        pending_recovery_count = db.query(Transfer).filter(
             and_(
                 Transfer.is_reclaimable == True,
                 Transfer.reclaimed_by_transfer_id.is_(None)
             )
         ).count()
-        recovered_count = db.session.query(Transfer).filter(
+        recovered_count = db.query(Transfer).filter(
             Transfer.reclaimed_by_transfer_id.isnot(None)
         ).count()
         
